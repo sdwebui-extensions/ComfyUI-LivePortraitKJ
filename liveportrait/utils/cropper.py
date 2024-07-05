@@ -46,7 +46,7 @@ class Cropper(object):
 
         self.face_analysis_wrapper = FaceAnalysisDIY(
             name='buffalo_l',
-            root="/stable-diffusion-cache/models/annotator/insightface" is os.path.exists("/stable-diffusion-cache/models/annotator/insightface") else os.path.join(folder_paths.models_dir, 'insightface'),
+            root="/stable-diffusion-cache/models/annotator/insightface" if os.path.exists("/stable-diffusion-cache/models/annotator/insightface") else os.path.join(folder_paths.models_dir, 'insightface'),
             providers=["CUDAExecutionProvider"]
         )
         self.face_analysis_wrapper.prepare(ctx_id=device_id, det_size=(512, 512))
