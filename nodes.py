@@ -16,6 +16,8 @@ from .liveportrait.modules.motion_extractor import MotionExtractor
 from .liveportrait.modules.appearance_feature_extractor import AppearanceFeatureExtractor
 from .liveportrait.modules.stitching_retargeting_network import StitchingRetargetingNetwork
 
+cache_dir = "/stable-diffusion-cache/models/liveportrait"
+
 class InferenceConfig:
     def __init__(self,
                     mask_crop = None,
@@ -112,11 +114,14 @@ class DownloadAndLoadLivePortraitModels:
         model_path = os.path.join(download_path)
 
         if not os.path.exists(model_path):
-            print(f"Downloading model to: {model_path}")
-            from huggingface_hub import snapshot_download
-            snapshot_download(repo_id="Kijai/LivePortrait_safetensors",
-                                local_dir=download_path,
-                                local_dir_use_symlinks=False)
+            if os.path.exists(cache_dir):
+                model_path = cache_dir
+            else:
+                print(f"Downloading model to: {model_path}")
+                from huggingface_hub import snapshot_download
+                snapshot_download(repo_id="Kijai/LivePortrait_safetensors",
+                                    local_dir=download_path,
+                                    local_dir_use_symlinks=False)
 
         model_config_path = os.path.join(script_directory, 'liveportrait', 'config', 'models.yaml')
         with open(model_config_path, 'r') as file:
