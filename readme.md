@@ -10,13 +10,17 @@ They go here (and are automatically downloaded if the folder is not present) `Co
 
 
 Insightface is also required.
-If you have a working compile encironment, installing it can be as easy as:
+If you have a working compile environment, installing it can be as easy as:
 
 `pip install insightface`
 
 or for the portable version, in the ComfyUI_windows_portable -folder:
 
 `python_embeded/python.exe -m pip install insightface`
+
+If this fails (and it's likely), you can check the Troubleshooting part of the reactor node for alternative:
+
+https://github.com/Gourieff/comfyui-reactor-node
 
 For insightface model, extract this to `ComfyUI/models/insightface/buffalo_l`:
 
