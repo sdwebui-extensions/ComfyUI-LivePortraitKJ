@@ -1,41 +1,32 @@
 # coding: utf-8
 
 import numpy as np
-import os.path as osp
 from typing import List, Union, Tuple
 from dataclasses import dataclass, field
-import cv2; cv2.setNumThreads(0); cv2.ocl.setUseOpenCL(False)
+import cv2#; cv2.setNumThreads(0); cv2.ocl.setUseOpenCL(False)
 
-from .landmark_runner import LandmarkRunner
-from .face_analysis_diy import FaceAnalysisDIY
-#from .helper import prefix
-from .crop import crop_image, crop_image_by_bbox, parse_bbox_from_landmark, average_bbox_lst
-#from .timer import Timer
-from .rprint import rlog as log
-from .io import load_image_rgb
-#from .video import VideoWriter, get_fps, change_video_fps
+from .landmark_runner import LandmarkRunner, LandmarkRunnerTorch
+
+from .crop import crop_image
 
 import folder_paths
 import os
 script_directory = os.path.dirname(os.path.abspath(__file__))
 
-def make_abs_path(fn):
-    return osp.join(osp.dirname(osp.realpath(__file__)), fn)
-
-
 @dataclass
 class Trajectory:
-    start: int = -1  # 起始帧 闭区间
-    end: int = -1  # 结束帧 闭区间
+    start: int = -1
+    end: int = -1
     lmk_lst: Union[Tuple, List, np.ndarray] = field(default_factory=list)  # lmk list
     bbox_lst: Union[Tuple, List, np.ndarray] = field(default_factory=list)  # bbox list
     frame_rgb_lst: Union[Tuple, List, np.ndarray] = field(default_factory=list)  # frame list
     frame_rgb_crop_lst: Union[Tuple, List, np.ndarray] = field(default_factory=list)  # frame crop list
 
-
-class Cropper(object):
-    def __init__(self, provider, **kwargs) -> None:
+class CropperInsightFace(object):
+    def __init__(self, **kwargs) -> None:
         device_id = kwargs.get('device_id', 0)
+        provider = kwargs.get('onnx_device', 'CPU')
+        detection_threshold = kwargs.get('detection_threshold', 0.5)
         self.landmark_runner = LandmarkRunner(
             #ckpt_path=make_abs_path('../../pretrained_weights/liveportrait/landmark.onnx'),
             ckpt_path="/stable-diffusion-cache/models/liveportrait/landmark.onnx" if os.path.exists("/stable-diffusion-cache/models/liveportrait/landmark.onnx") else os.path.join(folder_paths.models_dir, 'liveportrait', 'landmark.onnx'),
@@ -44,29 +35,17 @@ class Cropper(object):
         )
         self.landmark_runner.warmup()
 
+        from .face_analysis_diy import FaceAnalysisDIY
         self.face_analysis_wrapper = FaceAnalysisDIY(
             name='buffalo_l',
             root="/stable-diffusion-cache/models/annotator/insightface" if os.path.exists("/stable-diffusion-cache/models/annotator/insightface") else os.path.join(folder_paths.models_dir, 'insightface'),
             providers=[provider + 'ExecutionProvider',]
         )
-        self.face_analysis_wrapper.prepare(ctx_id=device_id, det_size=(512, 512))
+        self.face_analysis_wrapper.prepare(ctx_id=device_id, det_size=(512, 512), det_thresh=detection_threshold)
         self.face_analysis_wrapper.warmup()
 
-        self.crop_cfg = kwargs.get('crop_cfg', None)
-
-    def update_config(self, user_args):
-        for k, v in user_args.items():
-            if hasattr(self.crop_cfg, k):
-                setattr(self.crop_cfg, k, v)
-
-    def crop_single_image(self, obj, **kwargs):
-        direction = kwargs.get('direction', 'large-small')
-
-        # crop and align a single image
-        if isinstance(obj, str):
-            img_rgb = load_image_rgb(obj)
-        elif isinstance(obj, np.ndarray):
-            img_rgb = obj
+    def crop_single_image(self, img_rgb, dsize, scale, vy_ratio, vx_ratio, face_index, face_index_order, rotate):
+        direction = face_index_order
 
         src_face = self.face_analysis_wrapper.get(
             img_rgb,
@@ -75,73 +54,164 @@ class Cropper(object):
         )
 
         if len(src_face) == 0:
-            log('No face detected in the source image.')
-            raise Exception("No face detected in the source image!")
-        elif len(src_face) > 1:
-            log(f'More than one face detected in the image, only pick one face by rule {direction}.')
+            ret_dct = {}
+            cropped_image_256 = None
+            return ret_dct, cropped_image_256
 
-        src_face = src_face[0]
+        src_face = src_face[face_index] # choose the index if multiple faces detected
         pts = src_face.landmark_2d_106
-
+       
         # crop the face
-        ret_dct = crop_image(
+        ret_dct, image_crop = crop_image(
             img_rgb,  # ndarray
             pts,  # 106x2 or Nx2
-            dsize=kwargs.get('dsize', 512),
-            scale=kwargs.get('scale', 2.3),
-            vy_ratio=kwargs.get('vy_ratio', -0.15),
+            dsize=dsize,
+            scale=scale,
+            vy_ratio=vy_ratio,
+            vx_ratio=vx_ratio,
+            rotate=rotate
         )
         # update a 256x256 version for network input or else
-        ret_dct['img_crop_256x256'] = cv2.resize(ret_dct['img_crop'], (256, 256), interpolation=cv2.INTER_AREA)
-        ret_dct['pt_crop_256x256'] = ret_dct['pt_crop'] * 256 / kwargs.get('dsize', 512)
+        cropped_image_256 = cv2.resize(image_crop, (256, 256), interpolation=cv2.INTER_AREA)
+        del image_crop
+        ret_dct['pt_crop_256x256'] = ret_dct['pt_crop'] * 256 / dsize
 
+        input_image_size = img_rgb.shape[:2]
+        ret_dct['input_image_size'] = input_image_size
+    
         recon_ret = self.landmark_runner.run(img_rgb, pts)
         lmk = recon_ret['pts']
         ret_dct['lmk_crop'] = lmk
 
-        return ret_dct
+        return ret_dct, cropped_image_256
+    
+class CropperMediaPipe(object):
+    def __init__(self, **kwargs) -> None:
+        device_id = kwargs.get('device_id', 0)
+        provider = kwargs.get('onnx_device', 'CPU')
 
-    def get_retargeting_lmk_info(self, driving_rgb_lst):
-        # TODO: implement a tracking-based version
-        driving_lmk_lst = []
-        for driving_image in driving_rgb_lst:
-            ret_dct = self.crop_single_image(driving_image)
-            driving_lmk_lst.append(ret_dct['lmk_crop'])
-        return driving_lmk_lst
-
-    def make_video_clip(self, driving_rgb_lst, output_path, output_fps=30, **kwargs):
-        trajectory = Trajectory()
-        direction = kwargs.get('direction', 'large-small')
-        for idx, driving_image in enumerate(driving_rgb_lst):
-            if idx == 0 or trajectory.start == -1:
-                src_face = self.face_analysis_wrapper.get(
-                    driving_image,
-                    flag_do_landmark_2d_106=True,
-                    direction=direction
+        if provider != "torch_gpu":
+            self.landmark_runner = LandmarkRunner(
+                ckpt_path=os.path.join(folder_paths.models_dir, 'liveportrait', 'landmark.onnx'),
+                onnx_provider=provider,
+                device_id=device_id
                 )
-                if len(src_face) == 0:
-                    # No face detected in the driving_image
-                    continue
-                elif len(src_face) > 1:
-                    log(f'More than one face detected in the driving frame_{idx}, only pick one face by rule {direction}.')
-                src_face = src_face[0]
-                pts = src_face.landmark_2d_106
-                lmk_203 = self.landmark_runner(driving_image, pts)['pts']
-                trajectory.start, trajectory.end = idx, idx
-            else:
-                lmk_203 = self.face_recon_wrapper(driving_image, trajectory.lmk_lst[-1])['pts']
-                trajectory.end = idx
+            self.landmark_runner.warmup()
+        else:
+            self.landmark_runner = LandmarkRunnerTorch(
+                    ckpt_path=os.path.join(folder_paths.models_dir, 'liveportrait', 'landmark_model.pth'),
+                    onnx_provider=provider,
+                    device_id=device_id
+                )
+        
+        from ...media_pipe.mp_utils  import LMKExtractor
+        self.lmk_extractor = LMKExtractor()
 
-            trajectory.lmk_lst.append(lmk_203)
-            ret_bbox = parse_bbox_from_landmark(lmk_203, scale=self.crop_cfg.globalscale, vy_ratio=elf.crop_cfg.vy_ratio)['bbox']
-            bbox = [ret_bbox[0, 0], ret_bbox[0, 1], ret_bbox[2, 0], ret_bbox[2, 1]]  # 4,
-            trajectory.bbox_lst.append(bbox)  # bbox
-            trajectory.frame_rgb_lst.append(driving_image)
+    def crop_single_image(self, img_rgb, dsize, scale, vy_ratio, vx_ratio, face_index, face_index_order, rotate):
+       
+        face_result = self.lmk_extractor(img_rgb)
 
-        global_bbox = average_bbox_lst(trajectory.bbox_lst)
-        for idx, (frame_rgb, lmk) in enumerate(zip(trajectory.frame_rgb_lst, trajectory.lmk_lst)):
-            ret_dct = crop_image_by_bbox(
-                frame_rgb, global_bbox, lmk=lmk,
-                dsize=self.video_crop_cfg.dsize, flag_rot=self.video_crop_cfg.flag_rot, borderValue=self.video_crop_cfg.borderValue
-            )
-            frame_rgb_crop = ret_dct['img_crop']
+        if face_result is None:
+            ret_dct = {}
+            cropped_image_256 = None
+            return ret_dct, cropped_image_256
+
+        face_landmarks = face_result[face_index]
+
+        lmks = []
+        for index in range(len(face_landmarks)):
+            x = face_landmarks[index].x * img_rgb.shape[1]
+            y = face_landmarks[index].y * img_rgb.shape[0]
+            lmks.append([x, y])
+        pts = np.array(lmks)
+       
+        # crop the face
+        ret_dct, image_crop = crop_image(
+            img_rgb,  # ndarray
+            pts,  # 106x2 or Nx2
+            dsize=dsize,
+            scale=scale,
+            vy_ratio=vy_ratio,
+            vx_ratio=vx_ratio,
+            rotate=rotate
+        )
+        # update a 256x256 version for network input or else
+        cropped_image_256 = cv2.resize(image_crop, (256, 256), interpolation=cv2.INTER_AREA)
+        del image_crop
+        ret_dct['pt_crop_256x256'] = ret_dct['pt_crop'] * 256 / dsize
+
+        input_image_size = img_rgb.shape[:2]
+        ret_dct['input_image_size'] = input_image_size
+    
+        recon_ret = self.landmark_runner.run(img_rgb, pts)
+        lmk = recon_ret['pts']
+        ret_dct['lmk_crop'] = lmk
+
+        return ret_dct, cropped_image_256
+    
+class CropperFaceAlignment(object):
+    def __init__(self, **kwargs) -> None:
+        device_id = kwargs.get('device_id', 0)
+        provider = kwargs.get('onnx_device', 'CPU')
+        face_detector_device = kwargs.get('face_detector_device', 'cuda')
+        face_detector = kwargs.get('face_detector', 'blazeface')
+        face_detector_dtype = kwargs.get('face_detector_dtype', 'fp16')
+
+        if provider != "torch_gpu":
+            self.landmark_runner = LandmarkRunner(
+                ckpt_path=os.path.join(folder_paths.models_dir, 'liveportrait', 'landmark.onnx'),
+                onnx_provider=provider,
+                device_id=device_id
+                )
+            self.landmark_runner.warmup()
+        else:
+            self.landmark_runner = LandmarkRunnerTorch(
+                    ckpt_path=os.path.join(folder_paths.models_dir, 'liveportrait', 'landmark_model.pth'),
+                    onnx_provider=provider,
+                    device_id=device_id
+                )
+            
+        from ...face_alignment import FaceAlignment, LandmarksType
+        if 'blazeface' in face_detector:
+            face_detector_kwargs = {'back_model': face_detector == 'blazeface_back_camera'}
+            self.fa = FaceAlignment(LandmarksType.TWO_D, flip_input=False, device=face_detector_device, dtype=face_detector_dtype, face_detector='blazeface', face_detector_kwargs=face_detector_kwargs)
+        else:
+            self.fa = FaceAlignment(LandmarksType.TWO_D, flip_input=False, device=face_detector_device, dtype=face_detector_dtype, face_detector=face_detector)
+
+    def crop_single_image(self, img_rgb, dsize, scale, vy_ratio, vx_ratio, face_index, face_index_order, rotate):
+       
+        face_result = self.fa.get_landmarks_from_image(img_rgb)
+
+        if face_result is None:
+            ret_dct = {}
+            cropped_image_256 = None
+            return ret_dct, cropped_image_256
+
+        face_landmarks = face_result[face_index]
+
+        pts = np.array(face_landmarks)
+       
+        # crop the face
+        ret_dct, image_crop = crop_image(
+            img_rgb,  # ndarray
+            pts,  # 106x2 or Nx2
+            dsize=dsize,
+            scale=scale,
+            vy_ratio=vy_ratio,
+            vx_ratio=vx_ratio,
+            rotate=rotate
+        )
+        # update a 256x256 version for network input or else
+        cropped_image_256 = cv2.resize(image_crop, (256, 256), interpolation=cv2.INTER_AREA)
+        del image_crop
+        ret_dct['pt_crop_256x256'] = ret_dct['pt_crop'] * 256 / dsize
+
+        input_image_size = img_rgb.shape[:2]
+        ret_dct['input_image_size'] = input_image_size
+    
+        recon_ret = self.landmark_runner.run(img_rgb, pts)
+        lmk = recon_ret['pts']
+        ret_dct['lmk_crop'] = lmk
+
+        return ret_dct, cropped_image_256
+    

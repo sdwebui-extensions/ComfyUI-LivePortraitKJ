@@ -4,57 +4,16 @@
 utility functions and classes to handle feature extraction and model loading
 """
 
-import os
-import os.path as osp
 import cv2
 import torch
+import numpy as np
+from typing import Union
 from collections import OrderedDict
-
-def suffix(filename):
-    """a.jpg -> jpg"""
-    pos = filename.rfind(".")
-    if pos == -1:
-        return ""
-    return filename[pos + 1:]
-
-
-def prefix(filename):
-    """a.jpg -> a"""
-    pos = filename.rfind(".")
-    if pos == -1:
-        return filename
-    return filename[:pos]
-
-
-def basename(filename):
-    """a/b/c.jpg -> c"""
-    return prefix(osp.basename(filename))
-
-
-def is_video(file_path):
-    if file_path.lower().endswith((".mp4", ".mov", ".avi", ".webm")) or osp.isdir(file_path):
-        return True
-    return False
-
-def is_template(file_path):
-    if file_path.endswith(".pkl"):
-        return True
-    return False
-
-
-def mkdir(d, log=False):
-    # return self-assined `d`, for one line code
-    if not osp.exists(d):
-        os.makedirs(d, exist_ok=True)
-        if log:
-            print(f"Make dir: {d}")
-    return d
-
+from scipy.spatial import ConvexHull # pylint: disable=E0401,E0611
 
 def squeeze_tensor_to_numpy(tensor):
     out = tensor.data.squeeze(0).cpu().numpy()
     return out
-
 
 def dct2cuda(dct: dict, device_id: int):
     for key in dct:
@@ -95,11 +54,6 @@ def calculate_transformation(config, s_kp_info, t_0_kp_info, t_i_kp_info, R_s, R
     new_scale = s_kp_info['scale'] * (t_i_kp_info['scale'] / t_0_kp_info['scale'])
     return new_rotation, new_expression, new_translation, new_scale
 
-def load_description(fp):
-    with open(fp, 'r', encoding='utf-8') as f:
-        content = f.read()
-    return content
-
 
 def resize_to_limit(img, max_dim=1280, n=2):
     h, w = img.shape[:2]
@@ -119,3 +73,24 @@ def resize_to_limit(img, max_dim=1280, n=2):
     if new_h != img.shape[0] or new_w != img.shape[1]:
         img = img[:new_h, :new_w]
     return img
+
+def tensor_to_numpy(data: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
+    """transform torch.Tensor into numpy.ndarray"""
+    if isinstance(data, torch.Tensor):
+        return data.data.cpu().numpy()
+    return data
+
+def calc_motion_multiplier(
+    kp_source: Union[np.ndarray, torch.Tensor],
+    kp_driving_initial: Union[np.ndarray, torch.Tensor]
+) -> float:
+    """calculate motion_multiplier based on the source image and the first driving frame"""
+    kp_source_np = tensor_to_numpy(kp_source)
+    kp_driving_initial_np = tensor_to_numpy(kp_driving_initial)
+
+    source_area = ConvexHull(kp_source_np.squeeze(0)).volume
+    driving_area = ConvexHull(kp_driving_initial_np.squeeze(0)).volume
+    motion_multiplier = np.sqrt(source_area) / np.sqrt(driving_area)
+    # motion_multiplier = np.cbrt(source_area) / np.cbrt(driving_area)
+
+    return motion_multiplier
