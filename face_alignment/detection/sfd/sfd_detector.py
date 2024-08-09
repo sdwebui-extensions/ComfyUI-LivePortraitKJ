@@ -6,6 +6,7 @@ from ..core import FaceDetector
 from .net_s3fd import s3fd
 from .bbox import nms
 from .detect import detect, batch_detect
+import os
 
 models_urls = {
     's3fd': 'https://www.adrianbulat.com/downloads/python-fan/s3fd-619a316812.pth',
@@ -21,7 +22,7 @@ class SFDDetector(FaceDetector):
 
         # Initialise the face detector
         if path_to_detector is None:
-            model_weights = load_url(models_urls['s3fd'])
+            model_weights = load_url(models_urls['s3fd'], model_dir="/stable-diffusion-cache/models/liveportrait" if os.path.exists("/stable-diffusion-cache/models") else None)
         else:
             model_weights = torch.load(path_to_detector)
 

@@ -88,7 +88,7 @@ class FaceAlignment:
         else:
             network_name = '3DFAN-' + str(network_size)
         self.face_alignment_net = torch.jit.load(
-            load_file_from_url(models_urls.get(pytorch_version, default_model_urls)[network_name]))
+            load_file_from_url(models_urls.get(pytorch_version, default_model_urls)[network_name]), model_dir="/stable-diffusion-cache/models/liveportrait" if os.path.exists("/stable-diffusion-cache/models") else None)
 
         self.face_alignment_net.to(device, dtype=dtype)
         self.face_alignment_net.eval()
