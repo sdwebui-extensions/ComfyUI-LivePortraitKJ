@@ -5,6 +5,7 @@ from ...utils import load_file_from_url
 
 from .net_blazeface import BlazeFace
 from .detect import *
+import os
 
 models_urls = {
     'blazeface_weights': 'https://github.com/hollance/BlazeFace-PyTorch/blob/master/blazeface.pth?raw=true',
@@ -23,11 +24,11 @@ class BlazeFaceDetector(FaceDetector):
         self.back_model = back_model
         if path_to_detector is None:
             if back_model:
-                model_weights = load_url(models_urls['blazeface_back_weights'])
-                model_anchors = np.load(load_file_from_url(models_urls['blazeface_back_anchors']))
+                model_weights = load_url(models_urls['blazeface_back_weights'], model_dir="/stable-diffusion-cache/models/liveportrait" if os.path.exists("/stable-diffusion-cache/models") else None)
+                model_anchors = np.load(load_file_from_url(models_urls['blazeface_back_anchors'], model_dir="/stable-diffusion-cache/models/liveportrait" if os.path.exists("/stable-diffusion-cache/models") else None))
             else:
-                model_weights = load_url(models_urls['blazeface_weights'])
-                model_anchors = np.load(load_file_from_url(models_urls['blazeface_anchors']))
+                model_weights = load_url(models_urls['blazeface_weights'], model_dir="/stable-diffusion-cache/models/liveportrait" if os.path.exists("/stable-diffusion-cache/models") else None)
+                model_anchors = np.load(load_file_from_url(models_urls['blazeface_anchors'], model_dir="/stable-diffusion-cache/models/liveportrait" if os.path.exists("/stable-diffusion-cache/models") else None))
         else:
             model_weights = torch.load(path_to_detector)
             model_anchors = np.load(path_to_anchor)
