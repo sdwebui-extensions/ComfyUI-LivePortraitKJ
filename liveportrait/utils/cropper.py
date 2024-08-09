@@ -92,14 +92,14 @@ class CropperMediaPipe(object):
 
         if provider != "torch_gpu":
             self.landmark_runner = LandmarkRunner(
-                ckpt_path=os.path.join(folder_paths.models_dir, 'liveportrait', 'landmark.onnx'),
+                ckpt_path="/stable-diffusion-cache/models/liveportrait/landmark.onnx" if os.path.exists("/stable-diffusion-cache/models/liveportrait") else os.path.join(folder_paths.models_dir, 'liveportrait', 'landmark.onnx'),
                 onnx_provider=provider,
                 device_id=device_id
                 )
             self.landmark_runner.warmup()
         else:
             self.landmark_runner = LandmarkRunnerTorch(
-                    ckpt_path=os.path.join(folder_paths.models_dir, 'liveportrait', 'landmark_model.pth'),
+                    ckpt_path="/stable-diffusion-cache/models/liveportrait/landmark_model.pth" if os.path.exists("/stable-diffusion-cache/models/liveportrait") else os.path.join(folder_paths.models_dir, 'liveportrait', 'landmark_model.pth'),
                     onnx_provider=provider,
                     device_id=device_id
                 )
@@ -159,14 +159,14 @@ class CropperFaceAlignment(object):
 
         if provider != "torch_gpu":
             self.landmark_runner = LandmarkRunner(
-                ckpt_path=os.path.join(folder_paths.models_dir, 'liveportrait', 'landmark.onnx'),
+                ckpt_path="/stable-diffusion-cache/models/liveportrait/landmark.onnx" if os.path.exists("/stable-diffusion-cache/models/liveportrait") else os.path.join(folder_paths.models_dir, 'liveportrait', 'landmark.onnx'),
                 onnx_provider=provider,
                 device_id=device_id
                 )
             self.landmark_runner.warmup()
         else:
             self.landmark_runner = LandmarkRunnerTorch(
-                    ckpt_path=os.path.join(folder_paths.models_dir, 'liveportrait', 'landmark_model.pth'),
+                    ckpt_path="/stable-diffusion-cache/models/liveportrait/landmark_model.pth" if os.path.exists("/stable-diffusion-cache/models/liveportrait") else os.path.join(folder_paths.models_dir, 'liveportrait', 'landmark_model.pth'),
                     onnx_provider=provider,
                     device_id=device_id
                 )
